@@ -7,6 +7,7 @@ use axum::{
     Json, Router,
 };
 
+use once_cell::sync::Lazy;
 use sqlx::postgres::PgPoolOptions;
 use tower_http::cors::{Any, CorsLayer};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
@@ -15,6 +16,13 @@ use serde::{Deserialize, Serialize};
 mod controllers;
 mod error;
 mod models;
+mod utils;
+
+// secret key for JWT token
+static KEYS: Lazy<models::auth::Keys> = Lazy::new(|| {
+    let secret = std::env::var("JWT_SECRET").unwrap_or_else(|_| "Your secret here".to_owned());
+    models::auth::Keys::new(secret.as_bytes())
+});
 
 // コンパイル時、環境変数設定が必要
 // DATABASE_URL=postgresql://ユーザ名:パスワード@localhost:5432/mydb cargo run
@@ -43,14 +51,12 @@ async fn main() {
     let app = Router::new()
         // `GET /` goes to `root`
         .route("/", get(root))
-        .route("/register", post({
-            move |body| controllers::auth::register(body, axum::extract::State(pool))
-            }),
-        )
-        // `POST /users` goes to `create_user`
-        .route("/users", post(create_user))
-        .layer(cors);
-        // .with_state(pool);
+        .route("/register", post(controllers::auth::register))
+        .route("/login", post(controllers::auth::login))
+        //only loggedin user can access this route
+        .route("/user_profile", get(controllers::user::user_profile))
+        .layer(cors)
+        .with_state(pool);
 
     // run our app with hyper
     // `axum::Server` is a re-export of `hyper::Server`
@@ -67,31 +73,3 @@ async fn root() -> &'static str {
     "Hello, World!"
 }
 
-async fn create_user(
-    // this argument tells axum to parse the request body
-    // as JSON into a `CreateUser` type
-    Json(payload): Json<CreateUser>,
-) -> impl IntoResponse {
-    // insert your application logic here
-    let user = User {
-        id: 1337,
-        username: payload.username,
-    };
-
-    // this will be converted into a JSON response
-    // with a status code of `201 Created`
-    (StatusCode::CREATED, Json(user))
-}
-
-// the input to our `create_user` handler
-#[derive(Deserialize)]
-struct CreateUser {
-    username: String,
-}
-
-// the output to our `create_user` handler
-#[derive(Serialize)]
-struct User {
-    id: u64,
-    username: String,
-}
